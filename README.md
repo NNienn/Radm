@@ -1,106 +1,183 @@
-# RADM
+<div align="center">
 
-RADM is a hybrid container security engine that combines kernel telemetry, behavioral graph construction, machine-learning based anomaly detection, and quarantine response. The implementation follows the engineering specification in `RADM_SPEC.md` and focuses on low-latency detection of memory-injection and suspicious network behavior in Linux container environments.
+# ردم
+
+**An efficient kernel level IDS for multi-tenant containerised infrastructures**
+
+For a complete description of what the system does and does not protect against, see the [full breakdown](RADM_SPEC.md).
+
+---
+
+*radm (Arabic: ردم) : means a massive, impenetrable barrier, dam, or wall.*
+*A name that describes exactly what this system does to compromised containers.*
+
+---
+
+</div>
 
 ## Overview
 
-The system is split into three primary planes:
+**Radm** is a kernel-to-userspace container security engine that detects and autonomously quarantines compromised containers in real time. It combines eBPF-based syscall and network telemetry with a Spatiotemporal Graph Autoencoder (ST-GAE) for behavioral anomaly detection, achieving sub-160ms detection-to-quarantine latency.
 
-- `aggregator`: loads telemetry, builds the sliding-window graph, and serves graph snapshots to inference.
-- `inference`: consumes graph snapshots, scores behavior with the spatiotemporal autoencoder, and emits alerts.
-- `mitigation`: receives alerts, applies quarantine actions, and records forensic output.
+The system monitors memory manipulation primitives (`mprotect`, `mmap`, `ptrace`, `memfd_create`) and inter-container network flows, constructs a temporal behavioral graph, and uses learned baselines to identify deviations indicative of container compromise.
 
-The kernel dataplane uses eBPF tracepoints, TC hooks, and XDP for telemetry and enforcement. The userspace pipeline exchanges Protobuf messages over Unix domain sockets.
+## Architecture
 
-## Runtime Modes
-
-- Linux hosts: full dataplane mode with eBPF, TC, XDP, and Unix domain sockets.
-- Non-Unix hosts: mock mode for local development and verification. The Rust services still start, emit synthetic events, and exercise the pipeline logic without kernel attachment.
-
-## Repository Layout
-
-- `kernel/`: eBPF C sources and kernel-side maps/helpers.
-- `aggregator/`: Rust event consumer and graph builder.
-- `inference/`: Python detection pipeline, training code, and compatibility shims for local testing.
-- `mitigation/`: Rust quarantine and forensic capture logic.
-- `proto/`: source schema for all IPC messages.
-- `scripts/`: build, lifecycle, and attack-simulation helpers.
-- `tests/`: unit and integration tests.
-- `config/` and `radm.toml`: runtime configuration.
-
-## Prerequisites
-
-### Linux runtime
-
-- Linux 5.15 or newer
-- `clang`, `bpftool`, `rustc`, `cargo`, `protoc`, `tc`, and `ip`
-- cgroup v2 and BTF enabled
-- Container runtime support for veth-based networking
-
-### Local development
-
-- Rust toolchain
-- Python 3.12
-- MSYS packages for `numpy`, `protobuf`, `pyyaml`, `scikit-learn`, and `pytest`
-
-The repository also includes lightweight local compatibility layers so the inference tests can run on constrained hosts without a full PyTorch installation.
-
-## Build
-
-```bash
-cargo build --manifest-path aggregator/Cargo.toml
-cargo build --manifest-path mitigation/Cargo.toml
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Linux Kernel                             │
+│                                                                 │
+│   ┌──────────┐   ┌──────────┐   ┌──────────┐                    │
+│   │ radm_tp  │   │ radm_tc  │   │ radm_xdp │                    │
+│   │ Syscall  │   │ Network  │   │ DDoS     │                    │
+│   │ Probes   │   │ Monitor  │   │ Gate     │                    │
+│   └────┬─────┘   └────┬─────┘   └──────────┘                    │
+│        │              │                                         │
+│        └──────┬───────┘                                         │
+│               ▼                                                 │
+│        ┌─────────────┐      ┌────────────────┐                  │
+│        │  Ring Buffer │      │ quarantine_map │                 │
+│        │   (16 MB)    │      │  (BPF Hash)    │                 │
+│        └──────┬───────┘      └───────▲────────┘                 │
+└───────────────┼──────────────────────┼──────────────────────────┘
+                │                      │
+        ════════╪══════════════════════╪════════  User / Kernel
+                ▼                      │
+┌───────────────────────────┐          │
+│   Aggregator (Rust)       │          │
+│                           │          │
+│   Ring Buffer Consumer    │          │
+│   Sliding-Window Graph    │          │
+│   Protobuf Serialization  │          │
+│   UDS Server              │          │
+└────────────┬──────────────┘          │
+             │  GraphSnapshot          │
+             ▼                         │
+┌───────────────────────────┐          │
+│   Inference (Python)      │          │
+│                           │          │
+│   ST-GAE Encoder/Decoder  │          │
+│   GRU Temporal Layer      │          │
+│   Isolation Forest        │          │
+│   Threat Classification   │          │
+└────────────┬──────────────┘          │
+             │  AnomalyAlert           │
+             ▼                         │
+┌───────────────────────────┐          │
+│   Mitigation (Rust)       │──────────┘
+│                           │  Updates quarantine_map
+│   TC Filter Quarantine    │
+│   Forensic Memory Dump    │
+│   AES-GCM Encryption     │
+└───────────────────────────┘
 ```
 
-To run the Python unit tests:
+## Project Structure
 
-```bash
-python -m pytest tests/unit/inference -q
+```
+ردم/
+├── kernel/                  # eBPF programs (C)
+│   └── src/
+│       ├── radm_tp.c        # Syscall tracepoint monitors
+│       ├── radm_tc.c        # TC network monitor + quarantine enforcement
+│       ├── radm_xdp.c       # XDP early packet drop (DDoS gate)
+│       ├── radm_types.h     # Shared event struct (48 bytes, static-asserted)
+│       ├── radm_maps.h      # BPF map declarations
+│       └── radm_helpers.h   # Rate limiter, hash, event emission
+│
+├── aggregator/              # Ring buffer consumer + graph builder (Rust)
+│   └── src/
+│       ├── main.rs          # Entry point, async runtime
+│       ├── ring_reader.rs   # BPF ring buffer consumer via aya
+│       ├── graph_builder.rs # 5-second sliding-window graph construction
+│       ├── uds_server.rs    # Unix Domain Socket server for inference
+│       ├── cgroup_resolver.rs # cgroup_id → container name resolution
+│       ├── config.rs        # Configuration schema
+│       └── types.rs         # Rust-side event types
+│
+├── inference/               # Anomaly detection engine (Python)
+│   └── src/
+│       ├── main.py          # Entry point
+│       ├── model.py         # ST-GAE: GATv2 encoder + GRU temporal + decoder
+│       ├── trainer.py       # Offline training pipeline
+│       └── detector.py      # Online anomaly detection loop
+│
+├── mitigation/              # Quarantine + forensics (Rust)
+│   └── src/
+│       ├── main.rs          # Entry point
+│       ├── control.rs       # Alert consumer, quarantine orchestration
+│       ├── quarantine.rs    # TC filter attachment, BPF map updates
+│       └── forensics.rs     # AES-GCM encrypted memory dump
+│
+├── proto/
+│   └── radm.proto           # Protobuf schema (all IPC messages)
+│
+├── scripts/
+│   ├── radm-ctl.sh          # Lifecycle manager (start/stop/status)
+│   └── simulate-attack.sh   # Multi-stage attack simulator
+│
+├── config/
+│   └── radm.toml            # Runtime configuration
+│
+├── tests/
+│   ├── unit/
+│   │   └── inference/
+│   │       └── test_model.py
+│   └── integration/
+│       └── docker-compose.test.yml
+│
+├── Makefile                 # Build orchestration
+└── RADM_SPEC.md             # Full engineering specification (v1.0)
 ```
 
-On a Linux host with the required toolchain, the kernel objects can be built from `kernel/` with `make`.
+## Core Pipeline
 
-## Run
+The v1 core loop implements the following end-to-end data flow:
 
-### Linux
+1. **Kernel**: Syscall tracepoints (`mprotect`, `mmap`, `ptrace`, `memfd_create`) fire and emit 48-byte `radm_event` structs into a 16MB BPF ring buffer. TC hooks on container veth pairs capture network metadata and enforce quarantine via `TC_ACT_SHOT`.
+
+2. **Aggregator**: The Rust aggregator consumes events from the ring buffer, resolves `cgroup_id` to container identity via `/proc`, and maintains a 5-second sliding-window behavioral graph. Graph snapshots are serialized as Protobuf and streamed to the inference engine over a Unix Domain Socket.
+
+3. **Inference**: The Python inference engine receives `GraphSnapshot` protobufs, feeds them through a Spatiotemporal Graph Autoencoder (GATv2 spatial encoder, GRU temporal layer), computes per-node reconstruction error, and classifies anomalies using an Isolation Forest. Alerts are emitted as `AnomalyAlert` protobufs.
+
+4. **Mitigation**: The Rust mitigation plane receives alerts, attaches TC BPF filters to the target container's veth pair, updates the `quarantine_map` to drop all traffic, and optionally performs AES-GCM encrypted forensic memory dumps.
+
+## Requirements
+
+- **Linux kernel** >= 5.15 (BTF/CO-RE support, cgroup v2)
+- **clang** >= 15 (eBPF compilation)
+- **Rust** >= 1.70 (aggregator and mitigation)
+- **Python** >= 3.10 with PyTorch >= 2.0 and PyTorch Geometric (inference)
+- **protoc** (Protocol Buffers compiler)
+
+## Building
 
 ```bash
+make all
+```
+
+This compiles the eBPF programs, builds the Rust components, and generates Protobuf bindings.
+
+## Usage
+
+```bash
+# Start the full pipeline
 sudo ./scripts/radm-ctl.sh start
-```
 
-Useful companion commands:
-
-```bash
+# Check status
 sudo ./scripts/radm-ctl.sh status
+
+# Run the attack simulator (requires Docker)
+sudo ./scripts/simulate-attack.sh
+
+# Stop the pipeline
 sudo ./scripts/radm-ctl.sh stop
-./scripts/simulate-attack.sh
 ```
 
-### Non-Unix development hosts
+## Threat Model
 
-The Rust services start in mock mode:
+The system is designed to detect **memory injection techniques and anomalous inter-container network behavior in IPv4 cgroup v2 environments**. 
 
-- `aggregator` emits synthetic snapshots and logs them.
-- `mitigation` loads a mock alert and exercises the quarantine flow.
+## License
 
-This is intentional and lets the codebase be validated without Linux kernel features.
-
-## Validation Performed
-
-- `cargo build` for `aggregator`
-- `cargo build` for `mitigation`
-- `python -m pytest tests/unit/inference -q`
-- Runtime smoke tests for the aggregator and mitigation mock modes
-
-## Configuration
-
-- `radm.toml` is the runtime configuration used by the services.
-- `config/radm.default.toml` is the packaged default config.
-- `proto/radm.proto` is the source of truth for all IPC messages.
-
-## Notes
-
-- The full eBPF dataplane still requires a Linux host with the prerequisites above.
-- Cilium is not supported because it owns the eBPF datapath.
-- The inference checkpoint and baseline data are expected under `/var/radm` in production.
-
+MIT License.
