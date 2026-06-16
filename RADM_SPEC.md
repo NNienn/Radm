@@ -1,9 +1,11 @@
 # RADM · ردم
-## Enterprise-Grade Hybrid Zero-Trust Container Security Engine
+## A high throughput kernel level IDS for containerised infrastructures
 ### Complete Engineering Specification & Code-Generation Brief — v1.0
 
-> **ردم** (*radm*, Arabic) — to fill, to bury, to seal off.  
-> A name that describes exactly what this system does to compromised containers.
+> **ردم**
+# (*radm*, Arabic) ·  ردم
+> means a massive, impenetrable barrier, dam, or wall that completely blocks or fills a gap  
+> A name that describes exactly what this system does to compromised containers (packets).
 
 ---
 
