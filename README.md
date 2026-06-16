@@ -2,7 +2,9 @@
 
 # ردم
 
-**Enterprise-Grade Hybrid Zero-Trust Container Security Engine**
+**An efficient kernel level IDS for multi-tenant containerised infrastructures**
+
+For a complete description of what the system does and does not protect against, see the [full breakdown](RADM_SPEC.md).
 
 ---
 
@@ -15,7 +17,7 @@
 
 ## Overview
 
-**ردم** is a kernel-to-userspace container security engine that detects and autonomously quarantines compromised containers in real time. It combines eBPF-based syscall and network telemetry with a Spatiotemporal Graph Autoencoder (ST-GAE) for behavioral anomaly detection, achieving sub-160ms detection-to-quarantine latency.
+**Radm** is a kernel-to-userspace container security engine that detects and autonomously quarantines compromised containers in real time. It combines eBPF-based syscall and network telemetry with a Spatiotemporal Graph Autoencoder (ST-GAE) for behavioral anomaly detection, achieving sub-160ms detection-to-quarantine latency.
 
 The system monitors memory manipulation primitives (`mprotect`, `mmap`, `ptrace`, `memfd_create`) and inter-container network flows, constructs a temporal behavioral graph, and uses learned baselines to identify deviations indicative of container compromise.
 
@@ -25,18 +27,18 @@ The system monitors memory manipulation primitives (`mprotect`, `mmap`, `ptrace`
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Linux Kernel                             │
 │                                                                 │
-│   ┌──────────┐   ┌──────────┐   ┌──────────┐                   │
-│   │ radm_tp  │   │ radm_tc  │   │ radm_xdp │                   │
-│   │ Syscall  │   │ Network  │   │ DDoS     │                   │
-│   │ Probes   │   │ Monitor  │   │ Gate     │                   │
-│   └────┬─────┘   └────┬─────┘   └──────────┘                   │
+│   ┌──────────┐   ┌──────────┐   ┌──────────┐                    │
+│   │ radm_tp  │   │ radm_tc  │   │ radm_xdp │                    │
+│   │ Syscall  │   │ Network  │   │ DDoS     │                    │
+│   │ Probes   │   │ Monitor  │   │ Gate     │                    │
+│   └────┬─────┘   └────┬─────┘   └──────────┘                    │
 │        │              │                                         │
 │        └──────┬───────┘                                         │
 │               ▼                                                 │
 │        ┌─────────────┐      ┌────────────────┐                  │
-│        │  Ring Buffer │      │ quarantine_map │                  │
-│        │   (16 MB)    │      │  (BPF Hash)    │                  │
-│        └──────┬───────┘      └───────▲────────┘                  │
+│        │  Ring Buffer │      │ quarantine_map │                 │
+│        │   (16 MB)    │      │  (BPF Hash)    │                 │
+│        └──────┬───────┘      └───────▲────────┘                 │
 └───────────────┼──────────────────────┼──────────────────────────┘
                 │                      │
         ════════╪══════════════════════╪════════  User / Kernel
@@ -174,7 +176,7 @@ sudo ./scripts/radm-ctl.sh stop
 
 ## Threat Model
 
-The system is designed to detect **memory injection techniques and anomalous inter-container network behavior in IPv4 cgroup v2 environments**. For a complete description of what the system does and does not protect against, see [Appendix A of the specification](RADM_SPEC.md).
+The system is designed to detect **memory injection techniques and anomalous inter-container network behavior in IPv4 cgroup v2 environments**. 
 
 ## License
 
