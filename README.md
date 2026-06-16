@@ -180,4 +180,4 @@ The system is designed to detect **memory injection techniques and anomalous int
 
 ## License
 
-All rights reserved.
+MIT License.
