@@ -68,7 +68,7 @@ The system monitors memory manipulation primitives (`mprotect`, `mmap`, `ptrace`
 │                           │  Updates quarantine_map
 │   TC Filter Quarantine    │
 │   Forensic Memory Dump    │
-│   AES-GCM Encryption     │
+│   AES-GCM Encryption      │
 └───────────────────────────┘
 ```
 
