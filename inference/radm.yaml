@@ -1,0 +1,11 @@
+# inference/radm.yaml
+graph_socket_path: "/run/radm/graph.sock"
+alert_socket_path: "/run/radm/alert.sock"
+checkpoint_path: "/var/radm/model/checkpoint.pt"
+baseline_data_dir: "/var/radm/baseline"
+device: "cpu"
+alert_threshold: -0.2
+seq_len: 10
+epochs: 50
+learning_rate: 0.001
+min_baseline_hours: 2.0

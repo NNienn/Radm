@@ -1,0 +1,12 @@
+torch>=2.3.0
+torch-geometric>=2.5.0
+torch-scatter>=2.1.2
+torch-sparse>=0.6.18
+scikit-learn>=1.4.0
+protobuf>=4.25.0
+grpcio-tools>=1.62.0
+numpy>=1.26.0
+scipy>=1.13.0
+cryptography>=42.0.0
+pyyaml>=6.0.1
+prometheus-client>=0.20.0

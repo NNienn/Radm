@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  victim-container:
+    image: ubuntu:22.04
+    command: sleep 3600
+    cap_add: [SYS_PTRACE]
+
+  attack-simulator:
+    image: ubuntu:22.04
+    command: >
+      bash -c "
+        sleep 5 &&
+        python3 /test/simulate-attack.py
+          --target victim-container
+          --scenario memory_injection
+      "
+    volumes: [./scripts:/test]
+
+  test-runner:
+    image: python:3.11
+    command: >
+      bash -c "
+        pip install -q pytest requests prometheus-client &&
+        pytest /tests -v --timeout=120
+      "
+    volumes: [./tests/integration:/tests]
+    depends_on: [attack-simulator]

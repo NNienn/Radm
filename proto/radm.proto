@@ -1,0 +1,87 @@
+syntax = "proto3";
+package radm.v1;
+
+// -----------------------------------------------------------------------------
+// Kernel -> Aggregator (for reference — actual transport is BPF ring buffer)
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Aggregator -> Inference Engine
+// -----------------------------------------------------------------------------
+
+enum NodeType {
+  CONTAINER   = 0;
+  SOCKET      = 1;
+  EXTERNAL_IP = 2;
+}
+
+message NodeFeatures {
+  uint32          node_index = 1;
+  uint64          node_id    = 2;
+  NodeType        node_type  = 3;
+  repeated float  features   = 4; // length == 7 (NODE_FEATURE_DIM)
+  string          label      = 5;
+}
+
+message Edge {
+  uint32 src_index    = 1;
+  uint32 dst_index    = 2;
+  float  weight       = 3;
+  uint64 last_seen_ns = 4;
+}
+
+message GraphSnapshot {
+  uint64           window_start_ns = 1;
+  uint64           window_end_ns   = 2;
+  uint64           sequence_id     = 3;
+  repeated NodeFeatures nodes      = 4;
+  repeated Edge         edges      = 5;
+}
+
+// -----------------------------------------------------------------------------
+// Inference Engine -> Mitigation
+// -----------------------------------------------------------------------------
+
+enum ThreatClass {
+  UNKNOWN              = 0;
+  LATERAL_MOVEMENT     = 1;
+  MEMORY_INJECTION     = 2;
+  DATA_EXFILTRATION    = 3;
+  PRIVILEGE_ESCALATION = 4;
+  FILELESS_EXEC        = 5;
+}
+
+message AnomalyAlert {
+  uint64          alert_id           = 1;
+  uint64          timestamp_ns       = 2;
+  uint64          cgroup_id          = 3;
+  uint32          target_pid         = 4;
+  string          container_id       = 5;
+  string          container_name     = 6;
+  float           anomaly_score      = 7; // normalised [0,1]
+  repeated float  node_errors        = 8; // per-node reconstruction errors
+  ThreatClass     threat_class       = 9;
+  bytes           raw_graph_snapshot = 10;
+}
+
+// -----------------------------------------------------------------------------
+// Mitigation -> External Consumers
+// -----------------------------------------------------------------------------
+
+enum QuarantineStatus {
+  QUARANTINE_PENDING  = 0;
+  QUARANTINE_ACTIVE   = 1;
+  QUARANTINE_FAILED   = 2;
+  QUARANTINE_RELEASED = 3;
+}
+
+message QuarantineEvent {
+  uint64           alert_id       = 1;
+  uint64           timestamp_ns   = 2;
+  string           container_id   = 3;
+  uint32           target_pid     = 4;
+  QuarantineStatus status         = 5;
+  string           veth_iface     = 6;
+  string           forensic_path  = 7;
+  string           error_msg      = 8;
+}

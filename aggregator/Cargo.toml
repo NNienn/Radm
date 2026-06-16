@@ -1,0 +1,50 @@
+[package]
+name    = "radm-aggregator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "radm-aggregator"
+path = "src/main.rs"
+
+[dependencies]
+# BPF
+aya          = { version = "0.13", features = ["async_tokio"] }
+
+# Async runtime
+tokio        = { version = "1", features = ["full"] }
+
+# Serialization / Deserialization
+prost        = "0.13"
+bytes        = "1"
+serde        = { version = "1", features = ["derive"] }
+toml         = "0.8"
+config       = "0.14"
+
+# Concurrent structures
+dashmap      = "6"
+parking_lot  = "0.12"
+
+# Procfs
+
+# Logging & metrics
+tracing             = "0.1"
+tracing-subscriber  = { version = "0.3", features = ["env-filter"] }
+prometheus   = "0.13"
+lazy_static  = "1"
+
+# General utilities
+anyhow       = "1"
+chrono       = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+tokio-unix-fd  = "0.1"
+procfs       = "0.16"
+
+[build-dependencies]
+prost-build  = "0.13"
+
+[profile.release]
+opt-level    = 3
+lto          = "thin"
+codegen-units = 1
