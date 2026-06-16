@@ -1,0 +1,43 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# eBPF compiled objects
+*.o
+vmlinux.h
+
+# Generated protobuf code
+inference/src/proto/
+aggregator/src/proto/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Checkpoints and model weights
+*.pt
+*.pth
+*.ckpt
+
+# Logs
+*.log
+
+# Forensic dumps (sensitive)
+forensic_dumps/
