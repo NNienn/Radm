@@ -7,23 +7,7 @@
 
 ---
 
-## ⚠️  PREFLIGHT — FIVE CRITICAL QUESTIONS
 
-Before generating any code, confirm these five decisions. Each one changes the implementation
-in a non-trivial way. **Defaults are shown in brackets** — if you have no opinion, accept the default.
-
-| # | Question | Default |
-|---|---|---|
-| Q1 | **Minimum Linux kernel version?** Ring-buffer needs ≥ 5.8; CO-RE BTF needs ≥ 5.2; recommended floor is **5.15 LTS** (Ubuntu 22.04 / RHEL 9) | `5.15` |
-| Q2 | **Container runtime?** Quarantine mechanics differ: Docker manipulates `docker0`; containerd/k8s manipulates the CNI bridge. **⚠️ Avoid Cilium** — it owns the eBPF datapath and will conflict | `containerd + Kubernetes` |
-| Q3 | **GPU for inference?** TensorRT (INT8) requires NVIDIA CUDA ≥ 11.8. If none, the system falls back to `torch.compile` CPU-optimised inference | `CPU-only (CUDA optional)` |
-| Q4 | **Scale target?** Drives ring-buffer sizing, graph node caps, and thread pool counts | `50–500 containers (medium)` |
-| Q5 | **CNI plugin?** Flannel/Calico → standard veth-pairs on a Linux bridge; Calico BGP mode → requires extra routing logic. Cilium is unsupported | `Flannel or Docker default` |
-
-> Answers are baked into the `radm.toml` config schema (§9) so the binary can be recompiled  
-> without touching source code when assumptions change.
-
----
 
 ## §0 — WHAT WAS WRONG WITH THE ORIGINAL SPEC (and how Radm fixes it)
 
