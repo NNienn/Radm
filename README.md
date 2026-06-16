@@ -6,7 +6,7 @@
 
 ---
 
-*radm (Arabic: ردم) — to fill, to bury, to seal off.*
+*radm (Arabic: ردم) : means a massive, impenetrable barrier, dam, or wall.*
 *A name that describes exactly what this system does to compromised containers.*
 
 ---
