@@ -72,63 +72,7 @@ The system monitors memory manipulation primitives (`mprotect`, `mmap`, `ptrace`
 └───────────────────────────┘
 ```
 
-## Project Structure
 
-```
-ردم/
-├── kernel/                  # eBPF programs (C)
-│   └── src/
-│       ├── radm_tp.c        # Syscall tracepoint monitors
-│       ├── radm_tc.c        # TC network monitor + quarantine enforcement
-│       ├── radm_xdp.c       # XDP early packet drop (DDoS gate)
-│       ├── radm_types.h     # Shared event struct (48 bytes, static-asserted)
-│       ├── radm_maps.h      # BPF map declarations
-│       └── radm_helpers.h   # Rate limiter, hash, event emission
-│
-├── aggregator/              # Ring buffer consumer + graph builder (Rust)
-│   └── src/
-│       ├── main.rs          # Entry point, async runtime
-│       ├── ring_reader.rs   # BPF ring buffer consumer via aya
-│       ├── graph_builder.rs # 5-second sliding-window graph construction
-│       ├── uds_server.rs    # Unix Domain Socket server for inference
-│       ├── cgroup_resolver.rs # cgroup_id → container name resolution
-│       ├── config.rs        # Configuration schema
-│       └── types.rs         # Rust-side event types
-│
-├── inference/               # Anomaly detection engine (Python)
-│   └── src/
-│       ├── main.py          # Entry point
-│       ├── model.py         # ST-GAE: GATv2 encoder + GRU temporal + decoder
-│       ├── trainer.py       # Offline training pipeline
-│       └── detector.py      # Online anomaly detection loop
-│
-├── mitigation/              # Quarantine + forensics (Rust)
-│   └── src/
-│       ├── main.rs          # Entry point
-│       ├── control.rs       # Alert consumer, quarantine orchestration
-│       ├── quarantine.rs    # TC filter attachment, BPF map updates
-│       └── forensics.rs     # AES-GCM encrypted memory dump
-│
-├── proto/
-│   └── radm.proto           # Protobuf schema (all IPC messages)
-│
-├── scripts/
-│   ├── radm-ctl.sh          # Lifecycle manager (start/stop/status)
-│   └── simulate-attack.sh   # Multi-stage attack simulator
-│
-├── config/
-│   └── radm.toml            # Runtime configuration
-│
-├── tests/
-│   ├── unit/
-│   │   └── inference/
-│   │       └── test_model.py
-│   └── integration/
-│       └── docker-compose.test.yml
-│
-├── Makefile                 # Build orchestration
-└── RADM_SPEC.md             # Full engineering specification (v1.0)
-```
 
 ## Core Pipeline
 
