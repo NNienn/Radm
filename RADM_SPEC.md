@@ -1,6 +1,6 @@
 # RADM · ردم
 ## A high throughput kernel level IDS for containerised infrastructures
-### Complete Engineering Specification & Code-Generation Brief — v1.0
+### Complete Engineering Specification & Code-Generation Brief: v1.0
 
 > **ردم**
 # (*radm*, Arabic) ·  ردم
@@ -9,30 +9,6 @@
 
 ---
 
-
-
-## §0 — WHAT WAS WRONG WITH THE ORIGINAL SPEC (and how Radm fixes it)
-
-The source architecture brief contained twelve technical issues that would have produced non-compiling
-or unsafely operating code. Every fix is documented here so the implementation engineer understands
-**why** the design is the way it is.
-
-| # | Original Problem | Radm Fix |
-|---|---|---|
-| 1 | `char[16]` container_id in kernel struct — impossible to populate from kernel space | Replaced with `u64 cgroup_id` via `bpf_get_current_cgroup_id()`; name resolved in userspace |
-| 2 | XDP alone for container-level packet monitoring — XDP attaches to physical/virtual NICs, cannot discriminate per-container | Added **TC BPF** at veth pairs for container-scoped monitoring; XDP stays at host NIC for DDoS early-drop only |
-| 3 | `libbpf-rs` mixed with `aya` — two competing BPF Rust ecosystems | Standardised on **aya 0.13+** throughout; eBPF programs in C compiled to `.o`, loaded by aya |
-| 4 | No training pipeline — the model has nothing to learn from | Added offline baseline collection + ST-GAE training phase with checkpoint persistence |
-| 5 | MurmurHash3 as described contains unbounded loops — BPF verifier rejects this | Hash function replaced with `#pragma unroll`-bounded 32-byte-fixed implementation |
-| 6 | `BPF_MAP_TYPE_RINGBUF` rate limiter described but not implemented correctly | Explicit per-CPU token bucket using `BPF_MAP_TYPE_PERCPU_ARRAY` |
-| 7 | TensorRT INT8 as a hard requirement — breaks on every non-NVIDIA host | `torch.compile` CPU path as default; TensorRT as optional compile flag |
-| 8 | `setns()` quarantine loop described without capability requirements | Documented required capabilities; quarantine uses **TC BPF DROP at veth** + BPF map update |
-| 9 | "Scrape volatile RAM pages" — undefined mechanism | Forensic capture uses `process_vm_readv(2)` with proper ptrace attach/detach protocol |
-| 10 | No Protobuf schema defined | Complete `.proto` schema with framing protocol specified in §7 |
-| 11 | No deployment or testing strategy | Docker Compose dev environment + Kubernetes DaemonSet + full test matrix in §11–12 |
-| 12 | Dynamic graph node counts not addressed in PyG model | Fixed MAX_NODES=256 padded representation + validity mask; node registry in Rust |
-
----
 
 ## §1 — PROJECT SCOPE
 
@@ -94,22 +70,22 @@ Radm processes run as non-root but require these capabilities explicitly granted
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                         RING 0  —  KERNEL SPACE                             ║
+║                         RING 0  —  KERNEL SPACE                              ║
 ║                                                                              ║
 ║  Physical NIC / vNIC                                                         ║
-║  ┌──────────────────┐  XDP DROP (DDoS)       ┌─────────────────────────┐   ║
-║  │  XDP Hook        │──────────────────────► │ quarantine_map           │   ║
-║  │  (host NIC)      │                        │ BPF_MAP_TYPE_HASH        │   ║
-║  └──────┬───────────┘                        └─────────────────────────┘   ║
-║         │ XDP_PASS  →  Linux Bridge (docker0 / cni0)                        ║
+║  ┌──────────────────┐  XDP DROP (DDoS)       ┌──────────────────────────┐    ║
+║  │  XDP Hook        │──────────────────────► │ quarantine_map           │    ║
+║  │  (host NIC)      │                        │ BPF_MAP_TYPE_HASH        │    ║
+║  └──────┬───────────┘                        └───────────────────────── ┘    ║
+║         │ XDP_PASS  →  Linux Bridge (docker0 / cni0)                         ║
 ║         │                                                                    ║
-║  ┌──────▼───────────┐  TC BPF ingress/egress  ┌────────────────────────┐   ║
-║  │  TC BPF Hook     │ ──── metadata ────────►  │  BPF_MAP_TYPE_RINGBUF  │   ║
-║  │  (per-veth)      │      (per-container)     │  telemetry_ring         │   ║
-║  └──────────────────┘                          └──────────┬─────────────┘   ║
-║                                                            │                 ║
-║  ┌──────────────────┐  syscall args                        │                 ║
-║  │  Tracepoints     │ ─── mprotect / mmap ────────────────┘                 ║
+║  ┌──────▼───────────┐  TC BPF ingress/egress  ┌───────────────────────┐      ║
+║  │  TC BPF Hook     │ ──── metadata ────────► │  BPF_MAP_TYPE_RINGBUF │      ║
+║  │  (per-veth)      │      (per-container)    │  telemetry_ring       │      ║ 
+║  └──────────────────┘                         └──────────┬────────────┘      ║
+║                                                          │                   ║
+║  ┌──────────────────┐  syscall args                      │                   ║
+║  │  Tracepoints     │ ─── mprotect / mmap ───────────────┘                   ║
 ║  │  (per-PID)       │     ptrace / memfd_create                              ║
 ║  └──────────────────┘                                                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -126,7 +102,7 @@ Radm processes run as non-root but require these capabilities explicitly granted
 ║  └──────────────────────────┬─────────────────────────┘                      ║
 ║                             │  GraphSnapshot (Protobuf, length-prefixed)     ║
 ║                             │  UDS: /run/radm/graph.sock                     ║
-║                             ▼                                                 ║
+║                             ▼                                                ║
 ║  ┌────────────────────────────────────────────────────┐                      ║
 ║  │  radm-inference  (Python / PyTorch Geometric)      │                      ║
 ║  │                                                    │                      ║
@@ -138,7 +114,7 @@ Radm processes run as non-root but require these capabilities explicitly granted
 ║  └──────────────────────────┬─────────────────────────┘                      ║
 ║                             │  AnomalyAlert (Protobuf)                       ║
 ║                             │  UDS: /run/radm/alert.sock                     ║
-║                             ▼                                                 ║
+║                             ▼                                                ║
 ║  ┌────────────────────────────────────────────────────┐                      ║
 ║  │  radm-mitigation  (Rust)                           │                      ║
 ║  │                                                    │                      ║
