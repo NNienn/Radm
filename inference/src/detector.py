@@ -1,43 +1,41 @@
-# inference/src/detector.py
-#
-# Online anomaly detection loop.
-# Consumes GraphSnapshot protobufs from UDS, runs ST-GAE inference,
-# classifies anomalies via Isolation Forest, and emits AnomalyAlert protobufs.
+"""Online anomaly detection loop."""
+
+from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 import struct
 import time
-import logging
+from collections import deque
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-from collections import deque
-from pathlib import Path
 from sklearn.ensemble import IsolationForest
 
-from model import SpatiotemporalAutoencoder, SEQ_LEN, MAX_NODES
+from model import EMBEDDING_DIM, MAX_NODES, SEQ_LEN, SpatiotemporalAutoencoder
 from proto import radm_pb2 as pb
 from torch_geometric.data import Data
 
 log = logging.getLogger(__name__)
 
-ALERT_THRESHOLD = -0.2   # Isolation Forest score below this triggers alert
-
 
 def proto_to_pyg(snapshot: pb.GraphSnapshot) -> Data:
-    """Convert a GraphSnapshot protobuf into a PyTorch Geometric Data object."""
-    n = len(snapshot.nodes)
-    if n == 0:
+    """Convert a GraphSnapshot protobuf into a PyG-style data object."""
+    node_count = len(snapshot.nodes)
+    if node_count == 0:
         return Data(
-            x=torch.zeros(1, 7), edge_index=torch.zeros(2, 0, dtype=torch.long)
+            x=torch.zeros(1, 7),
+            edge_index=torch.zeros(2, 0, dtype=torch.long),
+            num_nodes=1,
+            node_ids=[],
         )
 
-    x = torch.tensor([list(node.features) for node in snapshot.nodes], dtype=torch.float)
-
+    x = torch.tensor([list(node.features) for node in snapshot.nodes], dtype=torch.float32)
     if snapshot.edges:
-        src = [e.src_index for e in snapshot.edges]
-        dst = [e.dst_index for e in snapshot.edges]
+        src = [edge.src_index for edge in snapshot.edges]
+        dst = [edge.dst_index for edge in snapshot.edges]
         edge_index = torch.tensor([src, dst], dtype=torch.long)
     else:
         edge_index = torch.zeros(2, 0, dtype=torch.long)
@@ -45,180 +43,160 @@ def proto_to_pyg(snapshot: pb.GraphSnapshot) -> Data:
     return Data(
         x=x,
         edge_index=edge_index,
-        num_nodes=n,
+        num_nodes=node_count,
         node_ids=[node.node_id for node in snapshot.nodes],
     )
 
 
 class AnomalyDetector:
-    def __init__(self, checkpoint_path: str, device: str = "cpu"):
+    def __init__(self, checkpoint_path: str, device: str = "cpu", alert_threshold: float = -0.2):
         self.device = torch.device(device)
-        ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-
+        self.alert_threshold = float(alert_threshold)
         self.model = SpatiotemporalAutoencoder().to(self.device)
-        self.model.load_state_dict(ckpt["model_state"])
-        self.model.eval()
 
-        # torch.compile for ~2× CPU speedup (requires PyTorch 2.0+)
-        # Wrapped in try-except in case of compilation issues on some hosts
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            self.model.load_state_dict(checkpoint["model_state"])
+            self.clf: IsolationForest = checkpoint["iforest"]
+            log.info("Loaded checkpoint from %s", checkpoint_path)
+        except FileNotFoundError:
+            log.warning("Checkpoint %s not found. Using an untrained fallback classifier.", checkpoint_path)
+            self.clf = IsolationForest(contamination=0.01, n_estimators=32, random_state=42)
+            self.clf.fit(np.zeros((32, EMBEDDING_DIM + 1), dtype=np.float32))
+        except Exception as exc:
+            log.warning("Could not load checkpoint %s: %s", checkpoint_path, exc)
+            self.clf = IsolationForest(contamination=0.01, n_estimators=32, random_state=42)
+            self.clf.fit(np.zeros((32, EMBEDDING_DIM + 1), dtype=np.float32))
+
+        self.model.eval()
         try:
             self.model = torch.compile(self.model, mode="reduce-overhead")
-        except Exception as e:
-            log.warning(f"torch.compile failed: {e}. Falling back to standard inference.")
+        except Exception as exc:
+            log.warning("torch.compile failed: %s", exc)
 
-        self.clf: IsolationForest = ckpt["iforest"]
         self.seq_buffer = deque(maxlen=SEQ_LEN)
         self.alert_id_counter = 0
 
-        log.info(f"Loaded checkpoint from {checkpoint_path}, device={device}")
-
     def feed(self, snapshot: pb.GraphSnapshot) -> list[pb.AnomalyAlert]:
-        """
-        Feed one snapshot into the sequence buffer.
-        Returns a list of AnomalyAlert protobufs (may be empty).
-        """
         graph = proto_to_pyg(snapshot)
         self.seq_buffer.append(graph)
 
         if len(self.seq_buffer) < SEQ_LEN:
-            return []  # not enough history yet
+            return []
 
         graphs = list(self.seq_buffer)
         with torch.no_grad():
-            x_recon, edge_probs, node_errors = self.model.reconstruct(graphs, self.device)
+            x_recon, _, node_errors = self.model.reconstruct(graphs, self.device)
 
-        # Compute Isolation Forest features (embedding + reconstruction error)
-        g_curr = graphs[-1].to(self.device)
-        n = min(g_curr.num_nodes, MAX_NODES)
-        z = self.model.spatial_enc(g_curr.x[:n], g_curr.edge_index)
+        current_graph = graphs[-1].to(self.device)
+        node_count = min(current_graph.num_nodes, MAX_NODES)
+        spatial_embeddings = self.model.spatial_enc(current_graph.x[:node_count], current_graph.edge_index)
+        features = np.hstack([
+            spatial_embeddings.detach().cpu().numpy(),
+            node_errors.detach().cpu().numpy().reshape(-1, 1),
+        ])
+        scores = self.clf.score_samples(features)
 
-        emb = z.cpu().numpy()
-        err = node_errors.cpu().numpy().reshape(-1, 1)
-        features = np.hstack([emb, err])
-
-        scores = self.clf.score_samples(features)  # lower = more anomalous
-
-        # Identify anomalous nodes
-        anomalous_mask = scores < ALERT_THRESHOLD
-        if not anomalous_mask.any():
+        anomalous_nodes = np.where(scores < self.alert_threshold)[0]
+        if len(anomalous_nodes) == 0:
             return []
 
-        alerts = []
-        for node_idx in np.where(anomalous_mask)[0]:
+        alerts: list[pb.AnomalyAlert] = []
+        for node_idx in anomalous_nodes:
             if node_idx >= len(snapshot.nodes):
                 continue
             node = snapshot.nodes[node_idx]
             if node.node_type != pb.NodeType.CONTAINER:
-                continue  # only alert on containers
+                continue
 
-            # Normalise score to [0,1] — lower IF score = higher anomaly
             raw_score = float(scores[node_idx])
             anomaly_score = 1.0 - (raw_score - self.clf.offset_) / abs(self.clf.offset_)
             anomaly_score = max(0.0, min(1.0, anomaly_score))
 
-            threat = self._classify_threat(graphs, node_errors, node_idx)
+            threat = self._classify_threat(current_graph, x_recon, node_idx)
 
             self.alert_id_counter += 1
             alert = pb.AnomalyAlert(
                 alert_id=self.alert_id_counter,
                 timestamp_ns=int(time.time_ns()),
                 cgroup_id=node.node_id,
-                target_pid=0,  # resolved by aggregator from cgroup_id
+                target_pid=0,
                 container_id=node.label,
                 container_name=node.label,
                 anomaly_score=anomaly_score,
-                node_errors=node_errors.tolist(),
+                node_errors=node_errors.detach().cpu().tolist(),
                 threat_class=threat,
                 raw_graph_snapshot=snapshot.SerializeToString(),
             )
             alerts.append(alert)
             log.warning(
-                f"ANOMALY: container={node.label} score={anomaly_score:.4f} "
-                f"threat={pb.ThreatClass.Name(threat)}"
+                "ANOMALY container=%s score=%.4f threat=%s",
+                node.label,
+                anomaly_score,
+                pb.ThreatClass.Name(threat),
             )
 
         return alerts
 
-    def _classify_threat(
-        self,
-        graphs: list,
-        node_errors: torch.Tensor,
-        node_idx: int,
-    ) -> pb.ThreatClass:
-        """
-        Heuristic threat classification based on which feature dimensions
-        contribute most to the reconstruction error.
-        Feature layout: [type_oh(3), mprotect_freq(1), iat_var(1), port_delta(1), event_freq(1)]
-        """
-        g_curr = graphs[-1]
-        n = min(g_curr.num_nodes, MAX_NODES)
-        with torch.no_grad():
-            z = self.model.spatial_enc(g_curr.x[:n], g_curr.edge_index)
-            x_recon = self.model.feat_dec(z)
-        feat_errors = F.mse_loss(
-            x_recon[node_idx], g_curr.x[node_idx], reduction='none'
-        ).cpu().numpy()
+    def _classify_threat(self, current_graph: Data, x_recon: torch.Tensor, node_idx: int) -> pb.ThreatClass:
+        feature_errors = F.mse_loss(x_recon[node_idx], current_graph.x[node_idx], reduction="none").detach().cpu().numpy()
 
-        mprotect_err = feat_errors[3]
-        iat_err      = feat_errors[4]
-        port_err     = feat_errors[5]
-        event_err    = feat_errors[6]
+        mprotect_error = feature_errors[3]
+        iat_error = feature_errors[4]
+        port_error = feature_errors[5]
+        event_error = feature_errors[6]
 
-        if mprotect_err > 0.5:
+        if mprotect_error > 0.5:
             return pb.ThreatClass.MEMORY_INJECTION
-        if port_err > 0.5 and event_err > 0.5:
+        if port_error > 0.5 and event_error > 0.5:
             return pb.ThreatClass.DATA_EXFILTRATION
-        if iat_err > 0.5:
+        if iat_error > 0.5:
             return pb.ThreatClass.LATERAL_MOVEMENT
         return pb.ThreatClass.UNKNOWN
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Async I/O wrappers for UDS communication
-# ─────────────────────────────────────────────────────────────────────────────
-
 async def read_length_prefixed(reader: asyncio.StreamReader) -> bytes:
-    """Read a 4-byte big-endian length prefix then that many bytes."""
     header = await reader.readexactly(4)
     length = struct.unpack(">I", header)[0]
     return await reader.readexactly(length)
 
 
-async def write_length_prefixed(writer: asyncio.StreamWriter, data: bytes):
-    """Write a 4-byte big-endian length prefix then the data."""
-    header = struct.pack(">I", len(data))
-    writer.write(header + data)
+async def write_length_prefixed(writer: asyncio.StreamWriter, data: bytes) -> None:
+    writer.write(struct.pack(">I", len(data)) + data)
     await writer.drain()
 
 
-async def run_detector(config: dict):
+async def run_detector(config: dict) -> None:
+    detector = AnomalyDetector(
+        config["checkpoint_path"],
+        config.get("device", "cpu"),
+        config.get("alert_threshold", -0.2),
+    )
+
     graph_socket_path = config["graph_socket_path"]
     alert_socket_path = config["alert_socket_path"]
-    checkpoint_path   = config["checkpoint_path"]
 
-    detector = AnomalyDetector(checkpoint_path, config.get("device", "cpu"))
-
-    # Connect to aggregator graph stream
     reader, _ = await asyncio.open_unix_connection(graph_socket_path)
-    log.info(f"Connected to graph stream: {graph_socket_path}")
+    log.info("Connected to graph stream: %s", graph_socket_path)
 
-    # Open alert socket (connect to mitigation plane)
     alert_reader, alert_writer = await asyncio.open_unix_connection(alert_socket_path)
-    log.info(f"Connected to alert socket: {alert_socket_path}")
+    log.info("Connected to alert socket: %s", alert_socket_path)
 
     while True:
         try:
             raw = await read_length_prefixed(reader)
             snapshot = pb.GraphSnapshot()
             snapshot.ParseFromString(raw)
-            log.info(f"got an event: sequence_id={snapshot.sequence_id}, nodes={len(snapshot.nodes)}")
+            log.info(
+                "received snapshot sequence_id=%s nodes=%s",
+                snapshot.sequence_id,
+                len(snapshot.nodes),
+            )
 
-            alerts = detector.feed(snapshot)
-            for alert in alerts:
+            for alert in detector.feed(snapshot):
                 await write_length_prefixed(alert_writer, alert.SerializeToString())
-
         except asyncio.IncompleteReadError:
-            log.warning("Graph stream closed — reconnecting in 2s")
+            log.warning("Graph stream closed, reconnecting in 2 seconds")
             await asyncio.sleep(2)
-        except Exception as e:
-            log.error(f"Detector error: {e}", exc_info=True)
+        except Exception as exc:
+            log.error("Detector error: %s", exc, exc_info=True)

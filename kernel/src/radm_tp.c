@@ -20,7 +20,7 @@
  *  memfd_create — catch in-memory fileless binary staging
  */
 
-static __always_inline void fill_common(struct radm_event *ev, __u32 syscall_id) {
+static __always_inline void fill_common(struct radm_event *ev, __u16 syscall_id) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     ev->timestamp_ns = bpf_ktime_get_ns();
     ev->cgroup_id    = bpf_get_current_cgroup_id();
@@ -69,8 +69,8 @@ int radm_ptrace(struct trace_event_raw_sys_enter *ctx) {
     struct radm_event ev = {};
     fill_common(&ev, RADM_SYS_PTRACE);
     /* Encode request + target PID in memory_flags */
-    __u32 request = (__u32)ctx->args[0];
-    __u32 target  = (__u32)ctx->args[1];
+    __u16 request = (__u16)ctx->args[0];
+    __u16 target  = (__u16)ctx->args[1];
     ev.memory_flags = (request << 16) | (target & 0xFFFF);
     radm_emit_event(&ev);
     return 0;

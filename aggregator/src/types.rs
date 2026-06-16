@@ -1,22 +1,21 @@
 /* types.rs — Rust equivalents of structs defined in radm_types.h */
 
-#[repr(C, align(8))]
+#[repr(C)]
 #[derive(Debug, Copy, Clone, Default)]
 pub struct RadmEvent {
     pub timestamp_ns: u64,
     pub cgroup_id: u64,
     pub pid: u32,
     pub tgid: u32,
-    pub syscall_id: u32,
     pub src_ip: u32,
     pub dst_ip: u32,
-    pub src_port: u16,
-    pub dst_port: u16,
     pub memory_flags: u32,
     pub payload_hash: u32,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub syscall_id: u16,
     pub event_type: u8,
     pub ip_proto: u8,
-    pub _pad: [u8; 2],
 }
 
 #[repr(C)]

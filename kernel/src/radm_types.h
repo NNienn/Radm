@@ -18,16 +18,15 @@ struct radm_event {
     __u64 cgroup_id;        /* bpf_get_current_cgroup_id()               */
     __u32 pid;              /* lower 32 bits of bpf_get_current_pid_tgid */
     __u32 tgid;             /* upper 32 bits                             */
-    __u32 syscall_id;       /* RADM_SYS_* or 0 for network events        */
     __u32 src_ip;           /* network-byte-order IPv4 (0 for syscalls)  */
     __u32 dst_ip;
-    __u16 src_port;         /* host-byte-order                           */
-    __u16 dst_port;
     __u32 memory_flags;     /* PROT_* flags for mprotect/mmap            */
     __u32 payload_hash;     /* murmur3 of first 32 payload bytes         */
+    __u16 src_port;         /* host-byte-order                           */
+    __u16 dst_port;
+    __u16 syscall_id;       /* RADM_SYS_* or 0 for network events        */
     __u8  event_type;       /* RADM_EVT_SYSCALL | RADM_EVT_NETWORK       */
     __u8  ip_proto;         /* IPPROTO_TCP / IPPROTO_UDP                 */
-    __u8  _pad[2];          /* explicit padding to align to 8-byte boundary */
 } __attribute__((aligned(8)));
 
 _Static_assert(sizeof(struct radm_event) == 48, "radm_event size mismatch");

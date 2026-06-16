@@ -1,61 +1,74 @@
 #!/usr/bin/env bash
-# Simulate a multi-stage container attack for adversarial testing.
-# Requires: Docker, a running Radm system, Python 3
-
 set -euo pipefail
 
 VICTIM_CONTAINER="${1:-radm-test-victim}"
-INFO() { echo "[SIM] $*"; }
+IMAGE="${2:-python:3.11-slim}"
 
-INFO "Launching victim container…"
-docker run -d --name "$VICTIM_CONTAINER" ubuntu:22.04 sleep 3600 2>/dev/null || true
-VICTIM_PID=$(docker inspect --format '{{.State.Pid}}' "$VICTIM_CONTAINER")
+info() {
+    echo "[SIM] $*"
+}
 
-INFO "Stage 1: Fileless binary injection (memfd_create)"
-docker exec "$VICTIM_CONTAINER" bash -c '
-    python3 -c "
-import ctypes, os
-fd = ctypes.CDLL(None).memfd_create(b\"payload\", 1)
-os.write(fd, b\"\x7fELF\" + b\"\x00\" * 60)
-print(f\"memfd fd={fd}\")
-"'
+cleanup() {
+    docker rm -f "$VICTIM_CONTAINER" >/dev/null 2>&1 || true
+}
 
-INFO "Stage 2: RWX memory allocation (mprotect + mmap)"
-docker exec "$VICTIM_CONTAINER" bash -c '
-python3 -c "
-import mmap, ctypes
-# Anonymous RWX mapping — classic shellcode staging
-m = mmap.mmap(-1, 4096, prot=mmap.PROT_READ|mmap.PROT_WRITE|mmap.PROT_EXEC)
-print(f\"RWX mmap: {len(m)} bytes\")
-m.close()
-"'
+trap cleanup EXIT
 
-INFO "Stage 3: Anomalous port-scanning (lateral movement simulation)"
-docker exec "$VICTIM_CONTAINER" bash -c '
-python3 -c "
-import socket, time
-for port in range(8000, 8100):
-    try:
-        s = socket.socket()
-        s.settimeout(0.01)
-        s.connect((\"8.8.8.8\", port))
-        s.close()
-    except:
-        pass
-print(\"Port scan complete\")
-" &'
+info "Launching victim container from $IMAGE"
+docker run -d --name "$VICTIM_CONTAINER" "$IMAGE" sleep 3600 >/dev/null
 
-INFO "Stage 4: ptrace injection attempt"
-docker exec "$VICTIM_CONTAINER" bash -c '
-    # Launch a dummy process then try to ptrace it
-    sleep 1 &
-    TARGET_PID=$!
-    python3 -c "
+info "Stage 1: memfd_create"
+docker exec "$VICTIM_CONTAINER" python - <<'PY'
 import ctypes
-PTRACE_ATTACH = 16
-pid = $(docker exec $VICTIM_CONTAINER ps -C sleep -o pid= | head -1 | tr -d " ") 
-ctypes.CDLL(None).ptrace(PTRACE_ATTACH, int(\"$TARGET_PID\"), 0, 0)
-" 2>/dev/null || true'
+import os
 
-INFO "Simulation complete. Monitor radm alerts with: journalctl -u radm-mitigation -f"
-INFO "Expected: ≥1 MEMORY_INJECTION or FILELESS_EXEC alert within 30 seconds"
+libc = ctypes.CDLL(None)
+fd = libc.memfd_create(b"payload", 1)
+os.write(fd, b"\x7fELF" + b"\x00" * 60)
+print(f"memfd fd={fd}")
+PY
+
+info "Stage 2: RWX mmap"
+docker exec "$VICTIM_CONTAINER" python - <<'PY'
+import mmap
+
+region = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
+print(f"RWX mmap bytes={len(region)}")
+region.close()
+PY
+
+info "Stage 3: port scan simulation"
+docker exec "$VICTIM_CONTAINER" python - <<'PY'
+import socket
+
+for port in range(8000, 8020):
+    try:
+        with socket.create_connection(("8.8.8.8", port), timeout=0.01):
+            pass
+    except OSError:
+        pass
+print("Port scan complete")
+PY
+
+info "Stage 4: ptrace attach attempt"
+docker exec "$VICTIM_CONTAINER" python - <<'PY'
+import ctypes
+import os
+import subprocess
+
+PTRACE_ATTACH = 16
+PTRACE_DETACH = 17
+libc = ctypes.CDLL(None)
+
+proc = subprocess.Popen(["sleep", "1"])
+try:
+    libc.ptrace(PTRACE_ATTACH, proc.pid, None, None)
+    os.waitpid(proc.pid, 0)
+    libc.ptrace(PTRACE_DETACH, proc.pid, None, None)
+    print(f"ptrace attached to pid={proc.pid}")
+except OSError as exc:
+    print(f"ptrace failed: {exc}")
+PY
+
+info "Simulation complete"
+info "Monitor alerts with the mitigation service logs or the alert socket"

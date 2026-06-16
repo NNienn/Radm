@@ -37,6 +37,7 @@ fn do_capture(pid: Pid, output_path: &Path) -> anyhow::Result<()> {
     use aes_gcm::{Aes256Gcm, KeyInit, aead::{Aead, OsRng, rand_core::RngCore}};
     use aes_gcm::aead::generic_array::GenericArray;
     use std::io::Write;
+    use std::io::IoSliceMut;
 
     let maps_path = format!("/proc/{}/maps", pid.as_raw());
     let maps_content = std::fs::read_to_string(&maps_path)?;
@@ -67,9 +68,9 @@ fn do_capture(pid: Pid, output_path: &Path) -> anyhow::Result<()> {
 
         let mut buf = vec![0u8; size];
         let remote_iov = nix::sys::uio::RemoteIoVec { base: start as usize, len: size };
-        let local_iov  = nix::sys::uio::IoVec::from_mut_slice(&mut buf);
+        let mut local_iov = [IoSliceMut::new(&mut buf)];
 
-        match nix::sys::uio::process_vm_readv(pid, &[local_iov], &[remote_iov]) {
+        match nix::sys::uio::process_vm_readv(pid, &mut local_iov, &[remote_iov]) {
             Ok(n) if n > 0 => {
                 // Prepend a region header: [u64 start][u64 end][u64 actual_bytes_read]
                 dump_data.extend_from_slice(&start.to_le_bytes());

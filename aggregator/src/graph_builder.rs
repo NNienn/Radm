@@ -10,8 +10,6 @@ use tokio::time::{interval, Duration};
 use crate::types::RadmEvent;
 use crate::proto::radm::{GraphSnapshot, NodeFeatures, Edge as ProtoEdge};
 
-const NODE_FEATURE_DIM: usize = 7;  // Must match Python model input_dim
-
 #[derive(Debug, Default, Clone)]
 struct NodeState {
     node_id:           u64,   // cgroup_id or IP hash
@@ -125,12 +123,14 @@ impl SlidingWindowGraph {
     }
 
     fn update_from_event_inner(&mut self, ev: &RadmEvent) {
+        let container_label = self
+            .cgroup_to_name
+            .get(&ev.cgroup_id)
+            .cloned()
+            .unwrap_or_else(|| format!("cg:{:x}", ev.cgroup_id));
+
         // Ensure container node exists
-        let c_idx = self.get_or_create_node(ev.cgroup_id, 0 /*CONTAINER*/, || {
-            self.cgroup_to_name.get(&ev.cgroup_id)
-                .cloned()
-                .unwrap_or_else(|| format!("cg:{:x}", ev.cgroup_id))
-        });
+        let c_idx = self.get_or_create_node(ev.cgroup_id, 0 /*CONTAINER*/, container_label);
 
         // Update container node state
         if let Some((_, state)) = self.nodes.get_mut(&ev.cgroup_id) {
@@ -143,13 +143,14 @@ impl SlidingWindowGraph {
         // For network events: create destination node and edge
         if ev.event_type == 2 /*RADM_EVT_NETWORK*/ && ev.dst_ip != 0 {
             let dst_key = ev.dst_ip as u64;
-            let d_idx = self.get_or_create_node(dst_key, 2 /*EXTERNAL_IP*/, || {
-                format!("{}.{}.{}.{}",
-                    ev.dst_ip & 0xFF,
-                    (ev.dst_ip >> 8) & 0xFF,
-                    (ev.dst_ip >> 16) & 0xFF,
-                    (ev.dst_ip >> 24) & 0xFF)
-            });
+            let dst_label = format!(
+                "{}.{}.{}.{}",
+                ev.dst_ip & 0xFF,
+                (ev.dst_ip >> 8) & 0xFF,
+                (ev.dst_ip >> 16) & 0xFF,
+                (ev.dst_ip >> 24) & 0xFF
+            );
+            let d_idx = self.get_or_create_node(dst_key, 2 /*EXTERNAL_IP*/, dst_label);
 
             if let Some((_, state)) = self.nodes.get_mut(&dst_key) {
                 if ev.dst_port != 0 {
@@ -172,7 +173,7 @@ impl SlidingWindowGraph {
         }
     }
 
-    fn get_or_create_node(&mut self, id: u64, ntype: u32, label_fn: impl FnOnce() -> String) -> u32 {
+    fn get_or_create_node(&mut self, id: u64, ntype: u32, label: String) -> u32 {
         if let Some((idx, _)) = self.nodes.get(&id) {
             return *idx;
         }
@@ -181,7 +182,7 @@ impl SlidingWindowGraph {
         let state = NodeState {
             node_id:   id,
             node_type: ntype,
-            label:     label_fn(),
+            label,
             ..Default::default()
         };
         self.nodes.insert(id, (idx, state));

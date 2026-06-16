@@ -10,10 +10,7 @@ pub mod proto {
     }
 }
 
-use tokio::net::UnixStream;
-use tokio::io::AsyncReadExt;
-use prost::Message;
-use tracing::{error, info, warn};
+use tracing::info;
 use crate::proto::radm::AnomalyAlert;
 
 #[tokio::main]
@@ -29,6 +26,29 @@ async fn main() -> anyhow::Result<()> {
         &cfg.tc_bpf_obj,
         &cfg.forensic_dir,
     );
+
+    #[cfg(unix)]
+    {
+        run_unix(cfg, executor).await?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        run_mock(cfg, executor).await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn run_unix(
+    cfg: config::MitigationConfig,
+    executor: quarantine_exec::QuarantineExecutor,
+) -> anyhow::Result<()> {
+    use tracing::{error, warn};
+    use prost::Message;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::UnixStream;
 
     loop {
         info!("Connecting to alert UDS socket at {}...", cfg.alert_socket_path);
@@ -52,8 +72,10 @@ async fn main() -> anyhow::Result<()> {
                         info!("Received anomaly alert for cgroup={:#x}", alert.cgroup_id);
                         if cfg.auto_quarantine {
                             let event = executor.quarantine(&alert).await;
-                            info!("Quarantine executed: status={:?}, forensics={:?}, error={:?}", 
-                                  event.status, event.forensic_path, event.error_msg);
+                            info!(
+                                "Quarantine executed: status={:?}, forensics={:?}, error={:?}",
+                                event.status, event.forensic_path, event.error_msg
+                            );
                         } else {
                             info!("Auto-quarantine is disabled. Observe mode only.");
                         }
@@ -66,4 +88,36 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+}
+
+#[cfg(not(unix))]
+async fn run_mock(
+    cfg: config::MitigationConfig,
+    executor: quarantine_exec::QuarantineExecutor,
+) -> anyhow::Result<()> {
+    info!("RADM mitigation is running in mock mode on a non-Unix host.");
+
+    let alert = AnomalyAlert {
+        alert_id: 1,
+        timestamp_ns: 0,
+        cgroup_id: 0xfeed_beef,
+        target_pid: 4242,
+        container_id: "mock-container".to_string(),
+        container_name: "mock-container".to_string(),
+        anomaly_score: 0.95,
+        node_errors: vec![0.1, 0.9, 0.2],
+        threat_class: crate::proto::radm::ThreatClass::MemoryInjection as i32,
+        raw_graph_snapshot: Vec::new(),
+    };
+
+    if cfg.auto_quarantine {
+        let event = executor.quarantine(&alert).await;
+        info!(
+            "Mock quarantine executed: status={:?}, veth={}, forensic={}",
+            event.status, event.veth_iface, event.forensic_path
+        );
+    }
+
+    tokio::signal::ctrl_c().await?;
+    Ok(())
 }

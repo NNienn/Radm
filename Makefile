@@ -14,11 +14,7 @@ mitigation:
 	cd mitigation && cargo build --release
 
 inference:
-	@if command -v protoc >/dev/null 2>&1; then \
-		bash proto/generate.sh; \
-	else \
-		echo "Warning: protoc not found, skipping Python proto generation."; \
-	fi
+	bash proto/generate.sh
 
 clean:
 	$(MAKE) -C kernel clean || true

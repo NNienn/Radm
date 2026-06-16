@@ -33,7 +33,7 @@ check_prerequisites() {
     info "Checking prerequisites…"
     local failed=0
 
-    for cmd in clang-15 bpftool rustc cargo python3 protoc tc ip; do
+    for cmd in clang-15 bpftool rustc cargo python3 tc ip; do
         if ! command -v "$cmd" &>/dev/null; then
             warn "Missing: $cmd"
             failed=$((failed + 1))
@@ -89,16 +89,7 @@ build_inference() {
 }
 
 generate_proto() {
-    info "Generating Protobuf bindings…"
-    cd "$REPO_ROOT"
-
-    # Python bindings
-    protoc --proto_path=proto \
-           --python_out=inference/src/proto \
-           --pyi_out=inference/src/proto \
-           proto/radm.proto
-
-    info "Proto bindings generated"
+    info "Protobuf bindings are checked in; no generation needed."
 }
 
 cmd_build() {
@@ -189,31 +180,45 @@ cmd_observe() {
     local AGG_PID=$!
 
     # Python baseline collector: read graph snapshots and save as pickled PyG objects
-    python3 - <<'PYEOF'
-import asyncio, struct, pickle, pathlib, time, sys
-sys.path.insert(0, "$REPO_ROOT/inference/src")
+    REPO_ROOT="$REPO_ROOT" VAR_DIR="$VAR_DIR" RUN_DIR="$RUN_DIR" TIMEOUT_MINUTES="$minutes" python3 - <<'PYEOF'
+import asyncio
+import pathlib
+import pickle
+import struct
+import time
+import os
+import sys
+
+repo_root = pathlib.Path(os.environ["REPO_ROOT"])
+sys.path.insert(0, str(repo_root / "inference" / "src"))
+
 from proto import radm_pb2 as pb
 from detector import proto_to_pyg
 
-BASELINE_DIR = pathlib.Path("$VAR_DIR/baseline")
-BASELINE_DIR.mkdir(exist_ok=True)
-TIMEOUT = int("$minutes") * 60
+baseline_dir = pathlib.Path(os.environ["VAR_DIR"]) / "baseline"
+baseline_dir.mkdir(parents=True, exist_ok=True)
+timeout_seconds = int(os.environ["TIMEOUT_MINUTES"]) * 60
+graph_socket = pathlib.Path(os.environ["RUN_DIR"]) / "graph.sock"
+
 
 async def collect():
-    r, _ = await asyncio.open_unix_connection("$RUN_DIR/graph.sock")
-    seq = 0
+    reader, _ = await asyncio.open_unix_connection(str(graph_socket))
+    sequence = 0
     start = time.time()
-    while time.time() - start < TIMEOUT:
-        hdr = await r.readexactly(4)
-        n = struct.unpack(">I", hdr)[0]
-        raw = await r.readexactly(n)
-        snap = pb.GraphSnapshot(); snap.ParseFromString(raw)
-        g = proto_to_pyg(snap)
-        out = BASELINE_DIR / f"snapshot_{seq:08d}.pkl"
-        out.write_bytes(pickle.dumps(g))
-        seq += 1
-        if seq % 100 == 0:
-            print(f"  Collected {seq} snapshots ({time.time()-start:.0f}s / {TIMEOUT}s)")
+    while time.time() - start < timeout_seconds:
+        header = await reader.readexactly(4)
+        length = struct.unpack(">I", header)[0]
+        raw = await reader.readexactly(length)
+        snapshot = pb.GraphSnapshot()
+        snapshot.ParseFromString(raw)
+        graph = proto_to_pyg(snapshot)
+        output = baseline_dir / f"snapshot_{sequence:08d}.pkl"
+        output.write_bytes(pickle.dumps(graph))
+        sequence += 1
+        if sequence % 100 == 0:
+            elapsed = time.time() - start
+            print(f"  Collected {sequence} snapshots ({elapsed:.0f}s / {timeout_seconds}s)")
+
 
 asyncio.run(collect())
 PYEOF

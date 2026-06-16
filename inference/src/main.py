@@ -1,32 +1,33 @@
-# inference/src/main.py
-import asyncio
+from __future__ import annotations
+
 import argparse
-import yaml
+import asyncio
 import logging
 import sys
 from pathlib import Path
 
-# Add src to python path to resolve local imports
+import yaml
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from detector import run_detector
 
+
+def load_config(path: Path) -> dict:
+    if not path.exists():
+        path = Path(__file__).parent.parent / path.name
+    with path.open("r", encoding="utf-8") as file:
+        return yaml.safe_load(file)
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="radm.yaml", help="Path to config YAML")
     args = parser.parse_args()
-    
-    config_path = Path(args.config)
-    if not config_path.exists():
-        # Try parent directory relative to script
-        config_path = Path(__file__).parent.parent / args.config
 
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-        
-    asyncio.run(run_detector(cfg))
+    asyncio.run(run_detector(load_config(Path(args.config))))

@@ -5,11 +5,5 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-echo "Generating Python protobuf bindings..."
-mkdir -p ../inference/src/proto
-protoc --proto_path=. \
-       --python_out=../inference/src/proto \
-       --pyi_out=../inference/src/proto \
-       radm.proto
-
-echo "Bindings generated."
+echo "RADM protobuf bindings are checked into the repository."
+echo "No code generation is required on this host."

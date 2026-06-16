@@ -8,9 +8,6 @@ name = "radm-aggregator"
 path = "src/main.rs"
 
 [dependencies]
-# BPF
-aya          = { version = "0.13", features = ["async_tokio"] }
-
 # Async runtime
 tokio        = { version = "1", features = ["full"] }
 
@@ -38,11 +35,8 @@ anyhow       = "1"
 chrono       = "0.4"
 
 [target.'cfg(unix)'.dependencies]
-tokio-unix-fd  = "0.1"
+aya          = { version = "0.13", features = ["async_tokio"] }
 procfs       = "0.16"
-
-[build-dependencies]
-prost-build  = "0.13"
 
 [profile.release]
 opt-level    = 3

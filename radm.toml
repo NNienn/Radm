@@ -1,55 +1,49 @@
-# radm.toml — Default global configuration for RADM
-
 [global]
-log_level = "info"          # trace | debug | info | warn | error
-run_dir   = "/run/radm"
-bpf_pin   = "/sys/fs/bpf/radm"
+log_level = "info"
+run_dir = "/run/radm"
+bpf_pin = "/sys/fs/bpf/radm"
 
 [kernel]
-bpf_object_dir     = "/etc/radm/bpf"     # compiled *.o files
-host_interface     = "eth0"              # NIC for XDP attach
-ringbuf_size_mb    = 16                  # 16 MB (must be power of 2)
-ratelimit_capacity = 10000              # token bucket capacity
-ratelimit_refill   = 1000               # tokens per millisecond
+bpf_object_dir = "/etc/radm/bpf"
+host_interface = "eth0"
+ringbuf_size_mb = 16
+ratelimit_capacity = 10000
+ratelimit_refill = 1000
 
 [aggregator]
-graph_socket_path    = "/run/radm/graph.sock"
-alert_socket_path    = "/run/radm/alert.sock"
-window_duration_ms   = 5000
+graph_socket_path = "/run/radm/graph.sock"
+alert_socket_path = "/run/radm/alert.sock"
+window_duration_ms = 5000
 snapshot_interval_ms = 1000
-max_nodes            = 256
-container_runtime    = "containerd"      # "docker" | "containerd"
-bpf_object_path      = "/etc/radm/bpf"
-quarantine_map_pin   = "/sys/fs/bpf/radm/quarantine_map"
-pid_cgmap_pin        = "/sys/fs/bpf/radm/pid_cgmap"
-
-# Thread pool sizes
-bpf_consumer_threads  = 2
+max_nodes = 256
+container_runtime = "containerd"
+bpf_object_path = "/etc/radm/bpf"
+quarantine_map_pin = "/sys/fs/bpf/radm/quarantine_map"
+pid_cgmap_pin = "/sys/fs/bpf/radm/pid_cgmap"
+bpf_consumer_threads = 2
 graph_builder_threads = 2
-ipc_threads           = 1
+ipc_threads = 1
 
 [inference]
-graph_socket_path  = "/run/radm/graph.sock"
-alert_socket_path  = "/run/radm/alert.sock"
-checkpoint_path    = "/var/radm/model/checkpoint.pt"
-baseline_data_dir  = "/var/radm/baseline"
-device             = "cpu"               # "cpu" | "cuda"
-alert_threshold    = -0.2               # IF score below this triggers alert
-seq_len            = 10
-
-# Training
-epochs             = 50
-learning_rate      = 0.001
+graph_socket_path = "/run/radm/graph.sock"
+alert_socket_path = "/run/radm/alert.sock"
+checkpoint_path = "/var/radm/model/checkpoint.pt"
+baseline_data_dir = "/var/radm/baseline"
+device = "cpu"
+alert_threshold = -0.2
+seq_len = 10
+epochs = 50
+learning_rate = 0.001
 min_baseline_hours = 2.0
 
 [mitigation]
-alert_socket_path  = "/run/radm/alert.sock"
-forensic_dir       = "/var/radm/forensics"
-bpf_pin_dir        = "/sys/fs/bpf/radm"
-tc_bpf_obj         = "/etc/radm/bpf/radm_tc.o"
-auto_quarantine    = true               # false = alert-only mode
-dry_run            = false
+alert_socket_path = "/run/radm/alert.sock"
+forensic_dir = "/var/radm/forensics"
+bpf_pin_dir = "/sys/fs/bpf/radm"
+tc_bpf_obj = "/etc/radm/bpf/radm_tc.o"
+auto_quarantine = true
+dry_run = false
 
 [observability]
-prometheus_port    = 9090
-metrics_path       = "/metrics"
+prometheus_port = 9090
+metrics_path = "/metrics"
